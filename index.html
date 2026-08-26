@@ -810,16 +810,16 @@ function esc(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").repla
 var SECTIONS = [
  {id:"denominacion", abbr:"DEN", short:"Denominación de la asignatura",
   label:"DENOMINACIÓN DE LA ASIGNATURA O UNIDAD DE APRENDIZAJE",
-  desc:"Nombre de la materia", re:/^(DENOMINACION|NOMBRE) DE LA (ASIGNATURA|MATERIA|UNIDAD)/},
+  desc:"Nombre de la materia", re:/^(DENOMINACION|NOMBRE)[^:]{0,15}(ASIGNAT|MATERIA|UNIDAD)/},
  {id:"ciclo", abbr:"CICLO", short:"Ciclo escolar", label:"CICLO ESCOLAR",
   desc:"Cuatrimestre o semestre", re:/^(CICLO ESCOLAR\b|CICLO\s*:|CICLO\s*$)/},
  {id:"clave", abbr:"CLAVE", short:"Clave de la asignatura", label:"CLAVE DE LA ASIGNATURA",
-  desc:"Clave institucional", re:/^CLAVE (DE (LA )?)?(ASIGNATURA|MATERIA|UNIDAD)/},
+  desc:"Clave institucional", re:/^CLAVE[^:]{0,20}(ASIGNAT|MATERIA|UNIDAD)/},
  {id:"fines", abbr:"FINES", short:"Fines de aprendizaje o formación",
   label:"FINES DE APRENDIZAJE O FORMACIÓN",
-  desc:"Objetivo general del curso", re:/^(FINES DEL? APRENDIZAJE|OBJETIVOS? +GENERAL(ES)?|OBJETIVOS?\s*:)/},
+  desc:"Objetivo general del curso", re:/^(FINES DEL? APRENDIZAJE|OBJETIVOS? +GENERAL(ES)?|OBJETIVOS?\s*:|DESCRIPCION +GENERAL)/},
  {id:"contenido", abbr:"TEMARIO", short:"Contenido temático", label:"CONTENIDO TEMÁTICO",
-  desc:"Temario por unidades", re:/^(CONTENIDO TEMATICO|TEMAS Y SUBTEMAS|TEMAS\s*:|TEMAS\s*$|CONTENIDO\s*:|CONTENIDO\s*$)/},
+  desc:"Temario por unidades", re:/^(CONTENIDO TEMA|TEMAS Y SUBTEMAS|TEMAS\s*:|TEMAS\s*$|CONTENIDO\s*:|CONTENIDO\s*$)/},
  {id:"actAcad", abbr:"ACAD", short:"Actividades bajo conducción de un académico",
   label:"ACTIVIDADES DE APRENDIZAJE BAJO CONDUCCIÓN DE UN ACADÉMICO",
   desc:"Actividades en clase", re:/^ACTIVIDADES (DE APRENDIZAJE|DE ENSENANZA|ENSENANZA)(?! *INDEPENDIENTES)/},
@@ -827,7 +827,7 @@ var SECTIONS = [
   label:"ACTIVIDADES DE APRENDIZAJE INDEPENDIENTES",
   desc:"Trabajo autónomo del alumno", re:/^ACTIVIDADES DE APRENDIZAJE INDEPENDIENTES/},
  {id:"criterios", abbr:"EVAL", short:"Criterios de evaluación", label:"CRITERIOS DE EVALUACIÓN",
-  desc:"Porcentajes de calificación", re:/^(CRITERIOS DE EVALUACION|EVALUACION(ES)? DEL CURSO\b|EVALUACION(ES)?\s*:|EVALUACION(ES)?\s*$)/},
+  desc:"Porcentajes de calificación", re:/^(CRITERIOS?[^:]{0,45}EVALUAC|EVALUACION(ES)? DEL CURSO\b|EVALUACION(ES)?\s*:|EVALUACION(ES)?\s*$)/},
  {id:"modalidades", abbr:"TIC", short:"Modalidades tecnológicas e informáticas",
   label:"MODALIDADES TECNOLÓGICAS E INFORMÁTICAS",
   desc:"Herramientas y plataformas", re:/^MODALIDADES TECNOLOGICAS/}
@@ -837,6 +837,27 @@ var SEC_BY_ID = {}; SECTIONS.forEach(function(s){ SEC_BY_ID[s.id]=s; });
 var RE_PAIR   = /^CICLO ESCOLAR\s+CLAVE/;              /* etiquetas lado a lado (PDF) */
 var RE_STOP   = /^(BIBLIOGRAF[IÍ]A|REVALIDACI[OÓ]N|SIMBOLOG[IÍ]A|CALENDARIO|PROCEDIMIENTO ADMINISTRATIVO|CONCLUSIONES?|DIRECTORIO|LINK DE MATERIAS)\b/;
 var RE_RUIDO  = /^((PRIMER|SEGUNDO|TERCER|CUARTO|QUINTO|SEXTO|SEPTIMO|OCTAVO|NOVENO|DECIMO|UNDECIMO|DUODECIMO)(O|A)?\s+(CUATRIMESTRE|SEMESTRE)|ANEXO\s*\d*\s*:?\s*(PROGRAMAS? DE ESTUDIOS?)?|P[AÁ]GINA\s*\d+|\d{1,3})$/;
+
+/* Algunos PDF sacan la primera letra del encabezado como un cuadro aparte y el
+   texto llega como “C ICLO:” o “N OMBRE DE LA ASIGNATURA:”. Sólo se vuelve a
+   pegar cuando al unirla resulta un encabezado conocido. */
+function uneCapitular(t){
+  if(!t || t.indexOf(" ") < 0) return t;
+  var re = /(^|\s)([A-ZÁÉÍÓÚÜÑ]) (?=[A-ZÁÉÍÓÚÜÑ])/g, m, cortes = [];
+  while((m = re.exec(t)) !== null){
+    var pos = m.index + m[1].length;
+    var resto = t.slice(pos).replace(" ", "");
+    if(headerOf(norm(resto))) cortes.push(pos);
+  }
+  if(!cortes.length) return t;
+  var out = "", ini = 0;
+  cortes.forEach(function(pos){
+    if(pos < ini) return;
+    out += t.slice(ini, pos+1);
+    ini = pos + 2;
+  });
+  return out + t.slice(ini);
+}
 
 /* Igual que norm() pero conservando la longitud, para poder cortar el renglón
    original en la posición exacta donde empieza un segundo encabezado. */
@@ -894,6 +915,10 @@ function encabezadoDe(raw, n){
   if(/\.{3,}|…/.test(raw)) return null;      /* renglón de índice, no encabezado */
   if(esMayusculas(raw)) return h;
   if(/^[^:]{3,120}:/.test(raw)) return h;   /* forma “Ciclo escolar: Primero” */
+  /* Título suelto en minúsculas, como “Criterios y Procedimientos de Evaluación
+     y Acreditación”: se acepta si es corto y no termina en punto. */
+  if(raw.length <= 80 && !/[.;,]\s*$/.test(raw) && /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/.test(raw) &&
+     clean(raw).split(" ").length >= 3) return h;
   return null;
 }
 
@@ -1006,6 +1031,7 @@ function quitarEncabezadosPie(lines){
 /* ----------------------------------------------------------- parser común */
 function parse(lines, opts){
   var i, n, consumed={}, pairAt={};
+  lines.forEach(function(l){ l.text = uneCapitular(l.text); });
   /* En Word los cuadros de texto pueden venir desordenados: ahí sí conviene
      cortar cuando una sección se repite. En PDF el orden es el visual. */
   var permiteCorte = !!(opts && opts.desordenado);
@@ -1122,7 +1148,13 @@ function parse(lines, opts){
 
   function procesaSegmento(raw, chunks, iLinea){
     var n = norm(raw);
-    if(n.length <= 70 && RE_STOP.test(n)){ cerrar(); return; }
+    /* Fin del anexo (bibliografía general, calendarios, revalidación…). Se exige
+       que sea un título suelto: corto, sin punto final y fuera del temario, para
+       no confundirlo con subtemas como “Bibliografía.” o “Conclusiones.”. */
+    if(n.length <= 70 && RE_STOP.test(n) && !/[.:,;]$/.test(clean(raw))
+       && curSec !== "contenido" && curSec !== "denominacion"){
+      cerrar(); return;
+    }
 
     var h = encabezadoDe(raw, n);
     if(h){
